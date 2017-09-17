@@ -15,9 +15,11 @@ public class DfcmPredictor {
     private long[] table;
     private int dfcm_hash;
     private long lastValue;
+    private int tableSize;
 
     public DfcmPredictor(int logOfTableSize) {
         table = new long[1 << logOfTableSize];
+        tableSize = table.length - 1;
     }
 
     public long getPrediction() {
@@ -27,7 +29,7 @@ public class DfcmPredictor {
     public void update(long true_value) {
         table[dfcm_hash] = true_value - lastValue;
         dfcm_hash = (int) (((dfcm_hash << 2) ^ ((true_value - lastValue) >> 40)) &
-                (table.length - 1));
+                tableSize);
         lastValue = true_value;
     }
 

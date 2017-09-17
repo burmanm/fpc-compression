@@ -14,17 +14,27 @@ import java.nio.ByteBuffer;
 
 public class FpcCompressor {
 
-    private static final int logOfTableSize = 16;
-    FcmPredictor predictor1 = new FcmPredictor(logOfTableSize);
-    DfcmPredictor predictor2 = new DfcmPredictor(logOfTableSize);
+    private FcmPredictor predictor1;
+    private DfcmPredictor predictor2;
+
+    private static final int DEFAULT_logOfTableSize = 16;
+
+    public FpcCompressor(int logOfTableSize) {
+        predictor1 = new FcmPredictor(logOfTableSize);
+        predictor2 = new DfcmPredictor(logOfTableSize);
+    }
+
+    public FpcCompressor() {
+        predictor1 = new FcmPredictor(DEFAULT_logOfTableSize);
+        predictor2 = new DfcmPredictor(DEFAULT_logOfTableSize);
+    }
 
     public void compress(ByteBuffer buff, double[] doubles) {
-        for (int i = 0; i < doubles.length; i += 2) {
-            if (i == doubles.length - 1) {
-                encodeAndPad(buff, doubles[i]);
-            } else {
-                encode(buff, doubles[i], doubles[i + 1]);
-            }
+        for (int i = 0; i < doubles.length - 1; i += 2) {
+            encode(buff, doubles[i], doubles[i + 1]);
+        }
+        if((doubles.length & 1) != 0) {
+            encodeAndPad(buff, doubles[doubles.length - 1]);
         }
     }
 
@@ -50,6 +60,7 @@ public class FpcCompressor {
             numZeroBytes++;
         }
         byte[] dst = new byte[8 - numZeroBytes];
+        System.out.printf("dst size: %d\n", dst.length);
         buff.get(dst);
         long diff = toLong(dst);
         long actual = prediction ^ diff;
@@ -95,7 +106,7 @@ public class FpcCompressor {
 
     private void encodeAndPad(ByteBuffer buf, double d) {
 
-        long dBits = Double.doubleToLongBits(d);
+        long dBits = Double.doubleToRawLongBits(d);
         long diff1d = predictor1.getPrediction() ^ dBits;
         long diff2d = predictor2.getPrediction() ^ dBits;
 
@@ -105,39 +116,42 @@ public class FpcCompressor {
         predictor2.update(dBits);
 
         byte code = 0;
-        if (predictor1BetterForD) {
-            int zeroBytes = encodeZeroBytes(diff1d);
-            code |= zeroBytes << 4;
-        } else {
+        if(!predictor1BetterForD) {
             code |= 0x80;
-            int zeroBytes = encodeZeroBytes(diff2d);
-            code |= zeroBytes << 4;
+            diff1d = diff2d;
         }
-
+        int zeroBytes = Long.numberOfLeadingZeros(diff1d) >> 3;
+        code |= headerZeroBytes(zeroBytes) << 4;
         code |= 0x06;
-
         buf.put(code);
-        if (predictor1BetterForD) {
-            buf.put(toByteArray(diff1d));
-        } else {
-            buf.put(toByteArray(diff2d));
-        }
-
+        pushByteArray(buf, diff1d, Long.BYTES - zeroBytes);
         buf.put((byte) 0);
-
     }
 
-    private int encodeZeroBytes(long diff1d) {
-        int leadingZeroBytes = Long.numberOfLeadingZeros(diff1d) / 8;
-        if (leadingZeroBytes >= 4) {
-            leadingZeroBytes--;
+    private int headerZeroBytes(int leadingZeroBytes) {
+        switch(leadingZeroBytes) {
+            case 8:
+            case 7:
+            case 6:
+            case 5:
+                return --leadingZeroBytes;
+            case 4:
+                return 3;
+            case 3:
+            case 2:
+            case 1:
+            case 0:
+                return leadingZeroBytes;
+            default:
+                return leadingZeroBytes;
         }
-        return leadingZeroBytes;
     }
 
     private void encode(ByteBuffer buf, double d, double e) {
 
-        long dBits = Double.doubleToLongBits(d);
+        // predictor1=FCM, 2=DFCM
+
+        long dBits = Double.doubleToRawLongBits(d);
         long diff1d = predictor1.getPrediction() ^ dBits;
         long diff2d = predictor2.getPrediction() ^ dBits;
 
@@ -146,7 +160,7 @@ public class FpcCompressor {
         predictor1.update(dBits);
         predictor2.update(dBits);
 
-        long eBits = Double.doubleToLongBits(e);
+        long eBits = Double.doubleToRawLongBits(e);
         long diff1e = predictor1.getPrediction() ^ eBits;
         long diff2e = predictor2.getPrediction() ^ eBits;
 
@@ -156,49 +170,82 @@ public class FpcCompressor {
         predictor2.update(eBits);
 
         byte code = 0;
-        if (predictor1BetterForD) {
-            int zeroBytes = encodeZeroBytes(diff1d);
-            code |= zeroBytes << 4;
-        } else {
+
+        if(!predictor1BetterForD) {
             code |= 0x80;
-            int zeroBytes = encodeZeroBytes(diff2d);
-            code |= zeroBytes << 4;
+            diff1d = diff2d;
         }
 
-        if (predictor1BetterForE) {
-            int zeroBytes = encodeZeroBytes(diff1e);
-            code |= zeroBytes;
-        } else {
+        int zeroBytesD = Long.numberOfLeadingZeros(diff1d) >> 3;
+        code |= headerZeroBytes(zeroBytesD) << 4;
+
+        if(!predictor1BetterForE) {
             code |= 0x08;
-            int zeroBytes = encodeZeroBytes(diff2e);
-            code |= zeroBytes;
+            diff1e = diff2e;
         }
+
+        int zeroBytesE = Long.numberOfLeadingZeros(diff1e) >> 3;
+        code |= headerZeroBytes(zeroBytesE);
 
         buf.put(code);
-        if (predictor1BetterForD) {
-            buf.put(toByteArray(diff1d));
-        } else {
-            buf.put(toByteArray(diff2d));
-        }
-
-        if (predictor1BetterForE) {
-            buf.put(toByteArray(diff1e));
-        } else {
-            buf.put(toByteArray(diff2e));
-        }
+        pushByteArray(buf, diff1d, Long.BYTES - zeroBytesD);
+        pushByteArray(buf, diff1e, Long.BYTES - zeroBytesE);
     }
 
-    public byte[] toByteArray(long diff) {
-        int encodedZeroBytes = encodeZeroBytes(diff);
-        if (encodedZeroBytes > 3) {
-            encodedZeroBytes++;
+    public void pushByteArray(ByteBuffer buf, long diff, int bytes) {
+        switch(bytes) {
+            case 8:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                buf.put((byte) (diff >>> 16));
+                buf.put((byte) (diff >>> 24));
+                buf.put((byte) (diff >>> 32));
+                buf.put((byte) (diff >>> 40));
+                buf.put((byte) (diff >>> 48));
+                buf.put((byte) (diff >>> 56));
+                break;
+            case 7:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                buf.put((byte) (diff >>> 16));
+                buf.put((byte) (diff >>> 24));
+                buf.put((byte) (diff >>> 32));
+                buf.put((byte) (diff >>> 40));
+                buf.put((byte) (diff >>> 48));
+                break;
+            case 6:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                buf.put((byte) (diff >>> 16));
+                buf.put((byte) (diff >>> 24));
+                buf.put((byte) (diff >>> 32));
+                buf.put((byte) (diff >>> 40));
+                break;
+            case 5:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                buf.put((byte) (diff >>> 16));
+                buf.put((byte) (diff >>> 24));
+                buf.put((byte) (diff >>> 32));
+                break;
+            case 4:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                buf.put((byte) (diff >>> 16));
+                buf.put((byte) (diff >>> 24));
+                break;
+            case 3:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                buf.put((byte) (diff >>> 16));
+                break;
+            case 2:
+                buf.put((byte) (diff & 0xFF));
+                buf.put((byte) (diff >>> 8));
+                break;
+            case 1:
+                buf.put((byte) (diff & 0xFF));
+                break;
         }
-        byte[] array = new byte[8 - encodedZeroBytes];
-        for (int i = 0; i < array.length; i++) {
-            array[i] = (byte) (diff & 0xff);
-            diff = diff >> 8;
-        }
-        return array;
     }
-
 }

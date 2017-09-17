@@ -10,11 +10,13 @@ import org.junit.Test;
 public class FcpCompressorTest {
 
     @Test
-    public void testLongToByteArray() {
-        FpcCompressor comp = new FpcCompressor();
-        for (long i = 0; i < 10000; i++) {
-            assertEquals(i, comp.toLong(comp.toByteArray(i)));
-        }
+    public void compressMore() {
+        double[] doubles = new double[] { 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0000000005460000000000000000001,
+                0.0, 1.1, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0,
+                6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 12.0, 0.5, 1.0, 1.5, 2.0 };
+        FpcCompressor fpc = new FpcCompressor(10);
+        ByteBuffer buffer = ByteBuffer.allocate(256);
+        fpc.compress(buffer, doubles);
     }
 
     @Test

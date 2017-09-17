@@ -14,9 +14,11 @@ public class FcmPredictor {
 
     private long[] table;
     private int fcm_hash;
+    private int tableSize;
 
     public FcmPredictor(int logOfTableSize) {
         table = new long[1 << logOfTableSize];
+        tableSize = table.length - 1;
     }
 
     public long getPrediction() {
@@ -25,7 +27,7 @@ public class FcmPredictor {
 
     public void update(long true_value) {
         table[fcm_hash] = true_value;
-        fcm_hash = (int) (((fcm_hash << 6) ^ (true_value >> 48)) & (table.length - 1));
+        fcm_hash = (int) (((fcm_hash << 6) ^ (true_value >> 48)) & tableSize);
     }
 
 }
