@@ -4,6 +4,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.*;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.Test;
 
@@ -17,6 +18,47 @@ public class FcpCompressorTest {
         FpcCompressor fpc = new FpcCompressor(10);
         ByteBuffer buffer = ByteBuffer.allocate(256);
         fpc.compress(buffer, doubles);
+
+        buffer.flip();
+
+        double[] dest = new double[doubles.length];
+        fpc = new FpcCompressor(10);
+        fpc.decompress(buffer, dest);
+
+        for(int i = 0; i < doubles.length; i++) {
+            assertEquals(Double.doubleToRawLongBits(doubles[i]), Double.doubleToRawLongBits(dest[i]));
+        }
+    }
+
+//    @Test
+    public void smallDeCompressPerfTest() {
+        double[] doubles = new double[8192];
+        double[] doublesU = new double[8192];
+        for(int i = 0; i < doubles.length; i++) {
+            doubles[i] = ThreadLocalRandom.current().nextDouble();
+        }
+
+        ByteBuffer bb = ByteBuffer.allocate(8192*Double.BYTES*2);
+
+        FpcCompressor fpc = new FpcCompressor(10);
+        fpc.compress(bb, doubles);
+
+        bb.flip();
+
+        long startTime = System.nanoTime();
+        for(int i = 0; i < 100000; i++) {
+            fpc = new FpcCompressor(10);
+            fpc.decompress(bb, doublesU);
+            bb.flip();
+        }
+        long endTime = System.nanoTime();
+        double seconds = (endTime - startTime) / Math.pow(10, 9);
+        double throughput = (8192*100000 / seconds) / Math.pow(10, 6);
+        // Original:
+//        Time it took to decompress 1000 times: 3.476551 s, throughput: 23.563581 M/s
+//        Time it took to decompress 1000 times: 1.473559 s, throughput: 55.593308 M/s
+//        Time it took to decompress 100000 times: 13.428478 s, throughput: 61.004679 M/s
+        System.out.printf("Time it took to decompress 100000 times: %f s, throughput: %f M/s\n", seconds, throughput);
     }
 
     @Test

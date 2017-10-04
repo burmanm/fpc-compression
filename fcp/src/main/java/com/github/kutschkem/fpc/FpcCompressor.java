@@ -17,9 +17,9 @@ public class FpcCompressor {
     private FcmPredictor fcmPredictor;
     private DfcmPredictor dfcmPredictor;
 
-    static int[] leadingBytesToHeaderFirst = new int[]{0, 1<<4, 2<<4,3 <<4, 3<<4, 4<<4, 5<<4, 6<<4, 7<<4};
-    static int[] leadingBytesToHeader = new int[]{0,1,2,3,3,4,5,6,7};
-    int[] headerBytesToLeading = new int[]{0,1,2,3,3,6,7,8};
+    static int[] LEADING_BYTES_TO_HEADER_FIRST = new int[]{0, 1<<4, 2<<4, 3<<4, 3<<4, 4<<4, 5<<4, 6<<4, 7<<4};
+    static int[] LEADING_BYTES_TO_HEADER = new int[]{0,1,2,3,3,4,5,6,7};
+    static int[] HEADER_BYTES_TO_LEADING = new int[]{0,1,2,3,5,6,7,8};
 
     private static final int DEFAULT_logOfTableSize = 16;
 
@@ -46,6 +46,18 @@ public class FpcCompressor {
         for (int i = 0; i < dest.length; i += 2) {
             decode(buff, dest, i);
         }
+        // If uneven amount of doubles is requested, remove last double - it's not real
+    }
+
+    private void process(ByteBuffer buff, double[] dest, int i, int numZeroBytes, long prediction) {
+        long diff = getLong(buff, numZeroBytes);
+
+        long actual = prediction ^ diff;
+
+        fcmPredictor.update(actual);
+        dfcmPredictor.update(actual);
+
+        dest[i] = Double.longBitsToDouble(actual);
     }
 
     private void decode(ByteBuffer buff, double[] dest, int i) {
@@ -58,7 +70,7 @@ public class FpcCompressor {
             prediction = fcmPredictor.getPrediction();
         }
 
-        int numZeroBytes = headerBytesToLeading[(header & 0x70) >> 4];
+        int numZeroBytes = HEADER_BYTES_TO_LEADING[(header & 0x70) >> 4];
         long diff = getLong(buff, numZeroBytes);
 
         long actual = prediction ^ diff;
@@ -74,7 +86,7 @@ public class FpcCompressor {
             prediction = fcmPredictor.getPrediction();
         }
 
-        numZeroBytes = headerBytesToLeading[(header & 0x07)];
+        numZeroBytes = HEADER_BYTES_TO_LEADING[(header & 0x07)];
 
         diff = getLong(buff, numZeroBytes);
 
@@ -89,6 +101,42 @@ public class FpcCompressor {
 
         dest[i + 1] = Double.longBitsToDouble(actual);
     }
+
+//    private void decode(ByteBuffer buff, double[] dest, int i) {
+//        byte header = buff.get();
+//        long prediction;
+//
+//        switch(header & 0x88) {
+//            case 0x80:
+//                // First is DFCM
+//                prediction = dfcmPredictor.getPrediction();
+//                process(buff, dest, i, HEADER_BYTES_TO_LEADING[(header & 0x70) >> 4], prediction);
+//                prediction = fcmPredictor.getPrediction();
+//                process(buff, dest, i+1, HEADER_BYTES_TO_LEADING[(header & 0x07)], prediction);
+//                break;
+//            case 0x08:
+//                // Second is DFCM
+//                prediction = fcmPredictor.getPrediction();
+//                process(buff, dest, i, HEADER_BYTES_TO_LEADING[(header & 0x70) >> 4], prediction);
+//                prediction = dfcmPredictor.getPrediction();
+//                process(buff, dest, i+1, HEADER_BYTES_TO_LEADING[(header & 0x07)], prediction);
+//                break;
+//            case 0x88:
+//                // Both are DFCM
+//                prediction = dfcmPredictor.getPrediction();
+//                process(buff, dest, i, HEADER_BYTES_TO_LEADING[(header & 0x70) >> 4], prediction);
+//                prediction = dfcmPredictor.getPrediction();
+//                process(buff, dest, i+1, HEADER_BYTES_TO_LEADING[(header & 0x07)], prediction);
+//                break;
+//            default:
+//                // Both are FCM
+//                prediction = fcmPredictor.getPrediction();
+//                process(buff, dest, i, HEADER_BYTES_TO_LEADING[(header & 0x70) >> 4], prediction);
+//                prediction = fcmPredictor.getPrediction();
+//                process(buff, dest, i+1, HEADER_BYTES_TO_LEADING[(header & 0x07)], prediction);
+//                break;
+//        }
+//    }
 
     public long getLong(ByteBuffer buf, int leadingBytes) {
         long value = 0;
@@ -164,7 +212,7 @@ public class FpcCompressor {
         }
 
         int zeroBytes = Long.numberOfLeadingZeros(diff1d) >> 3;
-        code |= leadingBytesToHeaderFirst[zeroBytes];
+        code |= LEADING_BYTES_TO_HEADER_FIRST[zeroBytes];
         code |= 0x06;
         buf.put(code);
         pushByteArray(buf, diff1d, zeroBytes);
@@ -194,7 +242,7 @@ public class FpcCompressor {
         }
 
         int zeroBytesD = Long.numberOfLeadingZeros(diff1d) >> 3;
-        code |= leadingBytesToHeaderFirst[zeroBytesD];
+        code |= LEADING_BYTES_TO_HEADER_FIRST[zeroBytesD];
 
         if(diff1e > diff2e) {
             code |= 0x08;
@@ -202,7 +250,7 @@ public class FpcCompressor {
         }
 
         int zeroBytesE = Long.numberOfLeadingZeros(diff1e) >> 3;
-        code |= leadingBytesToHeader[zeroBytesE];
+        code |= LEADING_BYTES_TO_HEADER[zeroBytesE];
 
         buf.put(code);
         pushByteArray(buf, diff1d, zeroBytesD);
@@ -250,6 +298,7 @@ public class FpcCompressor {
                 buf.put((byte) (diff >>> 8));
                 buf.put((byte) (diff >>> 16));
                 buf.put((byte) (diff >>> 24));
+                buf.put((byte) (diff >>> 32));
                 break;
             case 5:
                 buf.put((byte) (diff & 0xFF));
